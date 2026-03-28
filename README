@@ -1,0 +1,231 @@
+# CPU-Scheduling
+
+Simulador de escalonamento de tarefas em tempo real implementado em C, desenvolvido como atividade prática da disciplina de Sistemas Operacionais. O projeto implementa dois algoritmos clássicos de escalonamento — **Rate Monotonic (RM)** e **Earliest Deadline First (EDF)** — sobre um conjunto de tarefas periódicas com deadlines implícitos. Cada algoritmo é compilado em um executável independente (`rate` e `edf`) a partir do mesmo código-fonte, usando diretivas de pré-processador para selecionar a política em tempo de compilação. A simulação registra execuções completas, deadlines perdidos e tarefas mortas ao fim do tempo simulado, gerando um arquivo `.out` por execução. O escopo cobre apenas tarefas periódicas com deadline igual ao período; tarefas aperiódicas, servidores e escalonamento multiprocessador estão fora do escopo.
+
+---
+
+## Pré-requisitos
+
+- GCC 11 ou superior
+- GNU Make
+- Sistema operacional: Linux, Unix ou macOS
+
+Verifique as versões instaladas:
+```bash
+gcc --version
+make --version
+```
+
+---
+
+## Instalação
+
+```bash
+git clone https://github.com/seu-usuario/CPU-Scheduling.git
+cd CPU-Scheduling
+```
+
+Nenhuma dependência externa é necessária. Todos os arquivos necessários estão no repositório.
+
+---
+
+## Como Reproduzir
+
+### 1. Compilar
+
+Compila ambos os executáveis de uma vez:
+```bash
+make all
+```
+
+Ou individualmente:
+```bash
+make rate   # gera o executável ./rate
+make edf    # gera o executável ./edf
+```
+
+### 2. Preparar o arquivo de entrada
+
+Crie um arquivo de texto (ex: `tarefas.txt`) com o seguinte formato:
+
+```
+<tempo_de_simulação>
+T<id> <período> <tempo_de_execução>
+T<id> <período> <tempo_de_execução>
+...
+```
+
+Exemplo concreto:
+```
+100
+T1 50 25
+T2 30 10
+T3 20 5
+```
+
+- Linha 1: tempo total de simulação em unidades de tempo
+- Linhas seguintes: cada tarefa com seu id, período e tempo de execução
+- O deadline de cada tarefa é assumido igual ao período
+
+### 3. Executar
+
+```bash
+./rate tarefas.txt
+./edf  tarefas.txt
+```
+
+### 4. Validar a saída
+
+Após a execução, dois arquivos são gerados na pasta atual:
+
+```bash
+cat rate_meso.out
+cat edf_meso.out
+```
+
+A saída correta deve conter:
+- Blocos de execução no formato `[T<id>] for <n> units - <F|L|H|K>`
+- Seção `LOST DEADLINES` com contagem por tarefa
+- Seção `COMPLETE EXECUTION` com contagem por tarefa
+- Seção `KILLED` com tarefas interrompidas ao fim da simulação
+
+### 5. Limpar os artefatos gerados
+
+```bash
+make clean
+```
+
+---
+
+## Uso
+
+```bash
+./rate <arquivo_de_entrada>
+./edf  <arquivo_de_entrada>
+```
+
+| Executável | Algoritmo              | Arquivo gerado     |
+|------------|------------------------|--------------------|
+| `./rate`   | Rate Monotonic         | `rate_meso.out`    |
+| `./edf`    | Earliest Deadline First| `edf_meso.out`     |
+
+---
+
+## Algoritmos Implementados
+
+### Rate Monotonic (RM)
+Algoritmo de escalonamento estático baseado em prioridade fixa. Tarefas com menor período recebem maior prioridade permanentemente. É ótimo entre os algoritmos de prioridade fixa para tarefas periódicas com deadline implícito.
+
+### Earliest Deadline First (EDF)
+Algoritmo de escalonamento dinâmico. A cada unidade de tempo, a tarefa com o deadline absoluto mais próximo é escalonada. É ótimo para conjuntos de tarefas periódicas em um único processador — garante escalonabilidade sempre que a utilização do processador é ≤ 100%.
+
+---
+
+## Arquitetura e Decisões Técnicas
+
+### Arquivos e Responsabilidades
+
+| Arquivo | Responsabilidade |
+|---|---|
+| `scheduler.c` | Contém toda a lógica: leitura do arquivo de entrada, motor de simulação, funções da fila de prontos, comparadores de ordenação e geração do `.out`. |
+| `scheduler.h` | Define as structs `Task`, `TaskInstance` e `ReadyQueue`, constantes globais (`MAX_TASKS`, `LOGIN`, etc.) e os protótipos de função. |
+| `Makefile` | Compila `scheduler.c` duas vezes com macros distintas (`-DRATE_MONOTONIC` e `-DEARLIEST_DEADLINE_FIRST`), gerando executáveis independentes. |
+
+### Estruturas Principais e Invariantes
+
+**`Task`**: representa uma tarefa periódica. Invariante: `deadline == period` sempre, pois o simulador assume deadline implícito. `remaining_time` é zerado e reiniciado a cada ativação periódica (`t % period == 0`).
+
+**`ReadyQueue`**: fila de ponteiros para `Task`, com tamanho máximo `MAX_READY_QUEUE`. Invariante: após cada inserção, a fila é reordenada pela política ativa (período para RM, deadline absoluto para EDF). A posição `tasks[0]` é sempre a tarefa de maior prioridade.
+
+### Fluxo Principal
+
+```
+Leitura do arquivo de entrada
+        ↓
+Inicialização das tarefas (remaining_time = 0, next_activation = 0)
+        ↓
+Loop de tempo t = 0 até simulation_time - 1
+  ├── Ativa tarefas cujo período divide t (t % period == 0)
+  ├── Ordena a fila pela política (RM ou EDF)
+  ├── Remove da fila tarefas que perderam o deadline
+  ├── Registra bloco de execução anterior se houve troca de tarefa
+  └── Executa a tarefa no topo da fila (remaining_time--)
+        ↓
+Imprime relatórios: LOST DEADLINES / COMPLETE EXECUTION / KILLED
+```
+
+### Decisões Técnicas
+
+**Compilação por macro em vez de seleção em runtime**: a política de escalonamento é escolhida via `#if defined(RATE_MONOTONIC)` em tempo de compilação, não por argumento de linha de comando. Isso elimina um nível de indireção em runtime e garante que cada executável tenha exatamente uma política embutida, sem custo de desvio condicional no loop de simulação.
+
+**Fila de ponteiros em vez de cópias de struct**: `ReadyQueue` armazena `Task*` em vez de `Task`. Isso evita copiar structs inteiras a cada inserção e permite que as atualizações de `remaining_time` e `complete_executions` reflitam diretamente no array original de tarefas.
+
+**Compilação sem arquivo objeto intermediário**: o Makefile compila `scheduler.c` diretamente para cada executável (`gcc ... scheduler.c -o rate`) em vez de gerar um `.o` compartilhado. Isso garante que as macros de compilação sejam aplicadas corretamente e de forma independente para cada alvo.
+
+---
+
+## Resultados / Output
+
+Cada execução gera um arquivo `<algoritmo>_meso.out` com três seções:
+
+```
+EXECUTION BY RATE
+
+[T3] for 5 units - F
+[T2] for 10 units - F
+idle for 5 units
+[T3] for 5 units - F
+...
+
+LOST DEADLINES
+[T1] 0
+[T2] 1
+[T3] 0
+
+COMPLETE EXECUTION
+[T1] 2
+[T2] 3
+[T3] 5
+
+KILLED
+[T1] 0
+[T2] 0
+[T3] 1
+```
+
+**Códigos de status de execução:**
+
+| Código | Significado |
+|--------|-------------|
+| `F` | Tarefa completou a execução dentro do deadline |
+| `L` | Tarefa perdeu o deadline durante a execução |
+| `H` | Tarefa foi preemptada (houve troca de contexto) |
+| `K` | Tarefa foi morta ao fim do tempo de simulação |
+
+---
+
+## Contribuindo
+
+1. Faça um fork do repositório
+2. Crie uma branch descritiva: `git checkout -b feature/algoritmo-llf`
+3. Implemente e teste localmente com `make all && ./rate tarefas.txt`
+4. Abra um Pull Request descrevendo o algoritmo adicionado e os casos de teste usados
+
+Para adicionar um novo algoritmo de escalonamento:
+- Adicione a função `sort_queue_<nome>` em `scheduler.c`
+- Adicione o bloco `#elif defined(<MACRO>)` no `main`
+- Adicione o alvo correspondente no `Makefile`
+
+---
+
+## Licença
+
+MIT License. Consulte o arquivo [LICENSE](LICENSE) para os termos completos.
+
+---
+
+## Autor
+
+**Desenvolvido por:** Maria Eduarda Souza de Oliveira
+**Disciplina:** Sistemas Operacionais  
+**Instituição:** — CESAR School
